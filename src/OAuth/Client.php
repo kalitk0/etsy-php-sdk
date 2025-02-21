@@ -12,6 +12,7 @@ use Etsy\Utils\{
   PermissionScopes,
   Request as RequestUtil
 };
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * Etsy oAuth client class.
@@ -43,6 +44,32 @@ class Client {
    * @var array
    */
   protected $headers = [];
+
+    protected $apiCallLimits = [
+        'rest'  => [
+            'left'  => 0,
+            'made'  => 0,
+            'limit' => 10,
+        ],
+
+    ];
+
+    protected $rateLimitCycle = 0.5 * 1000;
+
+    /**
+     * The rate limiting cycle buffer (in ms).
+     *
+     * @var int
+     */
+    protected $rateLimitCycleBuffer = 0.1 * 1000;
+
+    /**
+     * Request timestamp for every new call.
+     * Used for rate limiting.
+     *
+     * @var int
+     */
+    protected $requestTimestamp;
 
   /**
    * Create a new instance of Client.
@@ -113,10 +140,13 @@ class Client {
       $opts['query'] = $args[1];
     }
     $opts['headers'] = $this->headers;
+    $this->handleRateLimiting();
+    $tmpTimestamp = $this->updateRequestTime();
     try {
       $client = $this->createHttpClient();
       $response = $client->{$method}(self::API_URL.$uri, $opts);
       $response = json_decode($response->getBody(), false);
+        $this->updateRestCallLimits($response);
       if($response) {
         $response->uri = $uri;
       }
@@ -338,7 +368,7 @@ class Client {
 
   /**
    * Check the scopes of the current API key (client ID).
-   * 
+   *
    * @link https://developers.etsy.com/documentation/reference/#operation/tokenScopes
    * @param string $token
    * @return array
@@ -351,4 +381,45 @@ class Client {
     ]);
     return $response->scopes ?? [];
   }
+
+    protected function handleRateLimiting()
+    {
+
+        // Calculate in milliseconds the duration the API call took
+        $duration = round(microtime(true) - $this->requestTimestamp, 3) * 1000;
+        $waitTime = ($this->rateLimitCycle - $duration) + $this->rateLimitCycleBuffer;
+
+        if ($waitTime > 0) {
+            // Do the sleep for X mircoseconds (convert from milliseconds)
+            $this->log('Rest rate limit hit');
+            usleep($waitTime * 1000);
+        }
+    }
+
+    protected function updateRequestTime()
+    {
+        $tmpTimestamp = $this->requestTimestamp;
+        $this->requestTimestamp = microtime(true);
+
+        return $tmpTimestamp;
+    }
+
+
+    protected function updateRestCallLimits($resp)
+    {
+        // Grab the API call limit header returned from Shopify
+        $callLimitHeader = $resp->getHeader('X-Limit-Per-Second');
+        if (!$callLimitHeader) {
+            return;
+        }
+        $made = $resp->getHeader('X-Remaining-This-Second');
+
+        $this->apiCallLimits['rest'] = [
+            'left'  => (int) $made,
+            'made'  => (int) $callLimitHeader - $made,
+            'limit' => (int) $callLimitHeader,
+        ];
+    }
+
+
 }
