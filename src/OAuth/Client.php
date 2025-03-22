@@ -389,25 +389,7 @@ class Client {
 
     protected function handleRateLimiting()
     {
-    /*	logger("this->requestTimestamp");
-		logger($this->requestTimestamp);
-        // Calculate in milliseconds the duration the API call took
-        $duration = round(microtime(true) - $this->requestTimestamp, 3) * 1000;
-        logger("duration");
-        logger($duration);
-        $waitTime = ($this->rateLimitCycle - $duration) + $this->rateLimitCycleBuffer;
-        logger("this->rateLimitCycle");
-        logger($this->rateLimitCycle);
-        logger("this->rateLimitCycleBuffer");
-        logger($this->rateLimitCycleBuffer);
-        logger("waitTime");
-        logger($waitTime);
-
-        if ($waitTime > 0) {
-            // Do the sleep for X mircoseconds (convert from milliseconds)
-            logger('Rest rate limit hit');
-            usleep($waitTime * 1000);
-        }*/
+    
         if($this->apiCallLimits['rest']['left'] != null && $this->apiCallLimits['rest']['left'] <= 1){
         	usleep(1000000);
         }
