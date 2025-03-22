@@ -47,14 +47,14 @@ class Client {
 
     protected $apiCallLimits = [
         'rest'  => [
-            'left'  => 0,
+            'left'  => null,
             'made'  => 0,
             'limit' => 10,
         ],
 
     ];
 
-    protected $rateLimitCycle = 0.5 * 1000;
+    protected $rateLimitCycle = 0.1 * 1000;
 
     /**
      * The rate limiting cycle buffer (in ms).
@@ -145,8 +145,9 @@ class Client {
     try {
       $client = $this->createHttpClient();
       $response = $client->{$method}(self::API_URL.$uri, $opts);
+      $this->updateRestCallLimits($response);
       $response = json_decode($response->getBody(), false);
-        $this->updateRestCallLimits($response);
+        
       if($response) {
         $response->uri = $uri;
       }
@@ -216,14 +217,17 @@ class Client {
       'code' => $code,
       'code_verifier' => $verifier
     ];
+    
     // Create a GuzzleHttp client.
     $client = $this->createHttpClient();
     try {
       $response = $client->post(self::TOKEN_URL, ['form_params' => $params]);
       $response = json_decode($response->getBody(), false);
+      
       return [
         'access_token' => $response->access_token,
-        'refresh_token' => $response->refresh_token
+        'refresh_token' => $response->refresh_token,
+        'expires_in' => $response->expires_in
       ];
     }
     catch(\Exception $e) {
@@ -243,7 +247,7 @@ class Client {
     $params = [
       'grant_type' => 'refresh_token',
       'client_id' => $this->client_id,
-      'refresh_token' => $refresh_token
+      'refresh_token' => $refresh_token,
     ];
     // Create a GuzzleHttp client.
     $client = $this->createHttpClient();
@@ -252,7 +256,8 @@ class Client {
       $response = json_decode($response->getBody(), false);
       return [
         'access_token' => $response->access_token,
-        'refresh_token' => $response->refresh_token
+        'refresh_token' => $response->refresh_token,
+        'expires_in' => $response->expires_in
       ];
     }
     catch(\Exception $e) {
@@ -384,16 +389,29 @@ class Client {
 
     protected function handleRateLimiting()
     {
-
+    /*	logger("this->requestTimestamp");
+		logger($this->requestTimestamp);
         // Calculate in milliseconds the duration the API call took
         $duration = round(microtime(true) - $this->requestTimestamp, 3) * 1000;
+        logger("duration");
+        logger($duration);
         $waitTime = ($this->rateLimitCycle - $duration) + $this->rateLimitCycleBuffer;
+        logger("this->rateLimitCycle");
+        logger($this->rateLimitCycle);
+        logger("this->rateLimitCycleBuffer");
+        logger($this->rateLimitCycleBuffer);
+        logger("waitTime");
+        logger($waitTime);
 
         if ($waitTime > 0) {
             // Do the sleep for X mircoseconds (convert from milliseconds)
-            $this->log('Rest rate limit hit');
+            logger('Rest rate limit hit');
             usleep($waitTime * 1000);
+        }*/
+        if($this->apiCallLimits['rest']['left'] != null && $this->apiCallLimits['rest']['left'] <= 1){
+        	usleep(1000000);
         }
+        
     }
 
     protected function updateRequestTime()
@@ -413,12 +431,13 @@ class Client {
             return;
         }
         $made = $resp->getHeader('X-Remaining-This-Second');
-
+		
         $this->apiCallLimits['rest'] = [
-            'left'  => (int) $made,
-            'made'  => (int) $callLimitHeader - $made,
-            'limit' => (int) $callLimitHeader,
+            'left'  => (int) $made[0],
+            'made'  => (int) $callLimitHeader[0] - $made[0],
+            'limit' => (int) $callLimitHeader[0],
         ];
+       // logger($this->apiCallLimits['rest']);
     }
 
 
