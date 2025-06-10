@@ -12,6 +12,7 @@ use Etsy\Utils\{
   PermissionScopes,
   Request as RequestUtil
 };
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * Etsy oAuth client class.
@@ -43,6 +44,32 @@ class Client {
    * @var array
    */
   protected $headers = [];
+
+    protected $apiCallLimits = [
+        'rest'  => [
+            'left'  => null,
+            'made'  => 0,
+            'limit' => 10,
+        ],
+
+    ];
+
+    protected $rateLimitCycle = 0.1 * 1000;
+
+    /**
+     * The rate limiting cycle buffer (in ms).
+     *
+     * @var int
+     */
+    protected $rateLimitCycleBuffer = 0.1 * 1000;
+
+    /**
+     * Request timestamp for every new call.
+     * Used for rate limiting.
+     *
+     * @var int
+     */
+    protected $requestTimestamp;
 
   /**
    * Create a new instance of Client.
@@ -113,10 +140,14 @@ class Client {
       $opts['query'] = $args[1];
     }
     $opts['headers'] = $this->headers;
+    $this->handleRateLimiting();
+    $tmpTimestamp = $this->updateRequestTime();
     try {
       $client = $this->createHttpClient();
       $response = $client->{$method}(self::API_URL.$uri, $opts);
+      $this->updateRestCallLimits($response);
       $response = json_decode($response->getBody(), false);
+        
       if($response) {
         $response->uri = $uri;
       }
@@ -186,14 +217,17 @@ class Client {
       'code' => $code,
       'code_verifier' => $verifier
     ];
+    
     // Create a GuzzleHttp client.
     $client = $this->createHttpClient();
     try {
       $response = $client->post(self::TOKEN_URL, ['form_params' => $params]);
       $response = json_decode($response->getBody(), false);
+      
       return [
         'access_token' => $response->access_token,
-        'refresh_token' => $response->refresh_token
+        'refresh_token' => $response->refresh_token,
+        'expires_in' => $response->expires_in
       ];
     }
     catch(\Exception $e) {
@@ -213,7 +247,7 @@ class Client {
     $params = [
       'grant_type' => 'refresh_token',
       'client_id' => $this->client_id,
-      'refresh_token' => $refresh_token
+      'refresh_token' => $refresh_token,
     ];
     // Create a GuzzleHttp client.
     $client = $this->createHttpClient();
@@ -222,7 +256,8 @@ class Client {
       $response = json_decode($response->getBody(), false);
       return [
         'access_token' => $response->access_token,
-        'refresh_token' => $response->refresh_token
+        'refresh_token' => $response->refresh_token,
+        'expires_in' => $response->expires_in
       ];
     }
     catch(\Exception $e) {
@@ -338,7 +373,7 @@ class Client {
 
   /**
    * Check the scopes of the current API key (client ID).
-   * 
+   *
    * @link https://developers.etsy.com/documentation/reference/#operation/tokenScopes
    * @param string $token
    * @return array
@@ -351,4 +386,59 @@ class Client {
     ]);
     return $response->scopes ?? [];
   }
+
+    protected function handleRateLimiting()
+    {
+    /*	logger("this->requestTimestamp");
+		logger($this->requestTimestamp);
+        // Calculate in milliseconds the duration the API call took
+        $duration = round(microtime(true) - $this->requestTimestamp, 3) * 1000;
+        logger("duration");
+        logger($duration);
+        $waitTime = ($this->rateLimitCycle - $duration) + $this->rateLimitCycleBuffer;
+        logger("this->rateLimitCycle");
+        logger($this->rateLimitCycle);
+        logger("this->rateLimitCycleBuffer");
+        logger($this->rateLimitCycleBuffer);
+        logger("waitTime");
+        logger($waitTime);
+
+        if ($waitTime > 0) {
+            // Do the sleep for X mircoseconds (convert from milliseconds)
+            logger('Rest rate limit hit');
+            usleep($waitTime * 1000);
+        }*/
+        if($this->apiCallLimits['rest']['left'] != null && $this->apiCallLimits['rest']['left'] <= 1){
+        	usleep(1000000);
+        }
+        
+    }
+
+    protected function updateRequestTime()
+    {
+        $tmpTimestamp = $this->requestTimestamp;
+        $this->requestTimestamp = microtime(true);
+
+        return $tmpTimestamp;
+    }
+
+
+    protected function updateRestCallLimits($resp)
+    {
+        // Grab the API call limit header returned from Shopify
+        $callLimitHeader = $resp->getHeader('X-Limit-Per-Second');
+        if (!$callLimitHeader) {
+            return;
+        }
+        $made = $resp->getHeader('X-Remaining-This-Second');
+		
+        $this->apiCallLimits['rest'] = [
+            'left'  => (int) $made[0],
+            'made'  => (int) $callLimitHeader[0] - $made[0],
+            'limit' => (int) $callLimitHeader[0],
+        ];
+       // logger($this->apiCallLimits['rest']);
+    }
+
+
 }
